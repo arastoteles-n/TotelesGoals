@@ -77,6 +77,10 @@ h1{font-size:clamp(42px,7vw,76px);line-height:.98;letter-spacing:-4px;margin:22p
 .fill{height:100%;width:0;background:linear-gradient(90deg,var(--accent2),var(--accent));border-radius:inherit;transition:width .9s cubic-bezier(.2,.8,.2,1)}
 .percent{margin-top:17px;font-size:35px;font-weight:900;letter-spacing:-2px}
 .target{font-size:12px;color:var(--muted)}
+.deadline{margin-top:10px;font-size:12px;color:var(--accent);font-weight:750}
+.deadline.expired{color:#ff6b6b}
+.deadline.completed{color:#58d68d}
+.deadline.unlimited{color:var(--muted)}
 footer{border-top:1px solid var(--border);padding:30px 0 42px}
 .footer-inner{display:flex;justify-content:space-between;align-items:center;gap:20px}
 .socials{display:flex;gap:10px}
@@ -91,10 +95,11 @@ footer{border-top:1px solid var(--border);padding:30px 0 42px}
 .dialog{width:min(480px,100%);background:var(--bg2);border:1px solid var(--border);border-radius:25px;padding:25px;box-shadow:0 30px 100px rgba(0,0,0,.45);animation:pop .25s ease}
 .dialog h2{margin:0 0 5px}.dialog p{margin:0 0 22px;color:var(--muted);font-size:13px}
 label{display:block;color:var(--muted);font-size:12px;font-weight:700;margin:15px 0 7px}
-input{
+input,select{
   width:100%;padding:13px 14px;border-radius:13px;border:1px solid var(--border);outline:none;
   background:color-mix(in srgb,var(--text) 5%,transparent);color:var(--text);font-size:15px
 }
+select option{background:var(--bg2);color:var(--text)}
 input:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent)}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .modal-actions{display:flex;gap:10px;margin-top:23px}.modal-actions button{flex:1}
@@ -154,6 +159,14 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,va
     <div class="row">
       <div><label for="current">Şu anki ilerleme (%)</label><input id="current" type="number" min="0" max="100" value="0"></div>
       <div><label for="target">Hedef (%)</label><input id="target" type="number" min="1" max="100" value="100"></div>
+    </div>
+    <label for="durationType">Bitiş süresi</label>
+    <div class="row">
+      <select id="durationType" onchange="toggleDurationInput()">
+        <option value="days">Gün belirle</option>
+        <option value="unlimited">Sınırsız</option>
+      </select>
+      <input id="durationDays" type="number" min="1" max="36500" value="30" placeholder="Örn. 30">
     </div>
     <div class="modal-actions">
       <button class="add-btn secondary" onclick="closeModal()">İptal</button>
@@ -215,23 +228,65 @@ function render(){
       </div>
       <div class="percent">${g.current}%</div>
       <div class="target">Hedef: ${g.target}%</div>
+      ${deadlineInfo(g)}
     </article>`
   }).join('');
 }
 function escapeHtml(s){return s.replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+function deadlineInfo(g){
+  if(!g.durationDays || !g.createdAt){
+    return '<div class="deadline unlimited">∞ Sınırsız süre</div>';
+  }
+
+  const end=new Date(g.createdAt);
+  end.setDate(end.getDate()+Number(g.durationDays));
+
+  if(g.current>=g.target){
+    return `<div class="deadline completed">✓ Hedef tamamlandı · Bitiş: ${end.toLocaleDateString('tr-TR')}</div>`;
+  }
+
+  const diff=end-new Date();
+  if(diff<=0){
+    return `<div class="deadline expired">⚠️ Süre doldu · ${end.toLocaleDateString('tr-TR')}</div>`;
+  }
+
+  const days=Math.ceil(diff/86400000);
+  return `<div class="deadline">⏳ ${days} gün kaldı · Bitiş: ${end.toLocaleDateString('tr-TR')}</div>`;
+}
+function toggleDurationInput(){
+  const unlimited=document.getElementById('durationType').value==='unlimited';
+  const input=document.getElementById('durationDays');
+  input.disabled=unlimited;
+  input.style.opacity=unlimited?'.45':'1';
+}
 function openModal(id=null){
   editingId=id;
   document.getElementById('modalTitle').textContent=id?'Hedefi düzenle':'Yeni hedef';
+  const type=document.getElementById('durationType');
+  const days=document.getElementById('durationDays');
+
   if(id){
     const g=goals.find(x=>x.id===id);
     document.getElementById('title').value=g.title;
     document.getElementById('current').value=g.current;
     document.getElementById('target').value=g.target;
+
+    if(g.durationDays){
+      type.value='days';
+      days.value=g.durationDays;
+    }else{
+      type.value='unlimited';
+      days.value='';
+    }
   }else{
     document.getElementById('title').value='';
     document.getElementById('current').value=0;
     document.getElementById('target').value=100;
+    type.value='days';
+    days.value=30;
   }
+
+  toggleDurationInput();
   document.getElementById('modal').classList.add('show');
   setTimeout(()=>document.getElementById('title').focus(),50);
 }
@@ -240,14 +295,21 @@ function saveGoal(){
   const title=document.getElementById('title').value.trim();
   let current=Number(document.getElementById('current').value);
   let target=Number(document.getElementById('target').value);
+  const durationType=document.getElementById('durationType').value;
+  const durationDays=Number(document.getElementById('durationDays').value);
   if(!title){alert('Hedef başlığı boş bırakılamaz.');return}
   if(!Number.isFinite(current)||!Number.isFinite(target)||current<0||current>100||target<1||target>100){
     alert('Yüzdeler 0-100 arasında olmalı.');return
   }
+  if(durationType==='days' && (!Number.isFinite(durationDays)||durationDays<1||durationDays>36500)){
+    alert('Bitiş süresi 1 ile 36500 gün arasında olmalı.');return
+  }
   if(editingId){
-    const g=goals.find(x=>x.id===editingId); Object.assign(g,{title,current,target});
+    const g=goals.find(x=>x.id===editingId);
+    const durationChanged=(g.durationDays||null)!=(durationType==='days'?durationDays:null);
+    Object.assign(g,{title,current,target,durationDays:durationType==='days'?durationDays:null,createdAt:durationChanged?new Date().toISOString():(g.createdAt||new Date().toISOString())});
   }else{
-    goals.unshift({id:crypto.randomUUID?crypto.randomUUID():Date.now().toString(),title,current,target});
+    goals.unshift({id:crypto.randomUUID?crypto.randomUUID():Date.now().toString(),title,current,target,durationDays:durationType==='days'?durationDays:null,createdAt:new Date().toISOString()});
   }
   save();closeModal();
 }
